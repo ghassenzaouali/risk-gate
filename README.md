@@ -76,7 +76,31 @@ _To be completed._
 
 ## System behavior under load
 
-_To be completed._
+Measured on 23 October 2026 against the public URL with [load/load-test.js](load/load-test.js): k6,
+run from one PC, ramps up to 50 virtual users without pause and holds for 2 minutes. Its thresholds
+are less than 1 % errors and p95 under 500 ms. Replica counts come from
+`az containerapp replica list`; decisions per replica come from the JSON logs in Log Analytics.
+
+| Scenario | Requests | Errors | p95 | Max | What happened |
+|---|---|---|---|---|---|
+| Load, starting from 1 replica | 146,831 (890/s) | 0 % | 95 ms | 1.3 s | 1 → 5 replicas within 20 s |
+| Deployment during the load | 165,390 (1,002/s) | 0 % | 51 ms | 0.7 s | the new revision started 5 replicas, then got the traffic; the old replicas stopped gracefully (SIGTERM) 30 s later |
+| Restart during the load | 159,980 (969/s) | 0 % | 55 ms | 0.6 s | replicas were replaced a few at a time, each old one stopping gracefully |
+
+- **Scaling**: the HTTP rule (10 concurrent requests per replica) added replicas up to the limit
+  of 5, and they shared the work (from 25,469 to 39,788 decisions each in the first scenario).
+- **Beyond 5 replicas**: 10 is when the HTTP rule adds a replica, not what a replica can handle. In
+  a local check, one container limited to 0.25 vCPU served 100 virtual users: about 500 requests/s,
+  0 % errors, p95 391 ms (96 ms with 10 users). Slower, but no failure. The app keeps no state, so it
+  can scale further by raising `--max-replicas` (5 is a cost limit).
+- **No request lost**: the number of decisions logged equals the number of requests counted by k6
+  (146,831 in the first scenario; 325,370 in the deployment and restart scenarios together).
+- **Invalid input**: a broken JSON body and a missing field both get a `400` with a message, and
+  `/health` still answers `200` right after.
+- **Cold start**: with 0 replicas at rest, the first request waits for a container to start.
+- **Limit of the test**: k6 ran on one PC with 50 virtual users, each waiting for its answer before
+  sending the next one (about 1,000 requests per second); p95 stayed under 100 ms, so the limit of
+  the system was not reached.
 
 ## Known limitations and possible improvements
 
